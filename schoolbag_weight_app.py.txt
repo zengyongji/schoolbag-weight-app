@@ -1,0 +1,99 @@
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+import os
+
+# ---------------------- 初始化配置 ----------------------
+st.set_page_config(page_title="学生书包重量测算APP", layout="wide", initial_sidebar_state="collapsed")  # 新增：收起侧边栏，更简洁
+st.title("📚 学生书包重量合规性测算")
+
+# 【关键修改】网页版改用云端临时存储（本地Excel在云端无法持久化）
+# 改用Streamlit的session_state + 云端临时文件，保证多用户访问数据不冲突
+if "data_df" not in st.session_state:
+    st.session_state.data_df = pd.DataFrame(
+        columns=["录入时间", "姓名", "班级", "体重(kg)", "书包重量(kg)", "合理重量上限(kg)", "是否合规"]
+    )
+
+# ---------------------- 核心计算函数 ----------------------
+def calculate_schoolbag(weight, schoolbag_weight):
+    max_suitable = round(weight * 0.1, 2)
+    is_suitable = "✅ 合规" if schoolbag_weight <= max_suitable else "❌ 不合规"
+    return max_suitable, is_suitable
+
+# ---------------------- 信息录入区域 ----------------------
+st.subheader("📝 学生信息录入")
+with st.form(key="info_form"):
+    col1, col2 = st.columns(2)
+    with col1:
+        name = st.text_input("学生姓名", placeholder="请输入姓名")
+        class_name = st.text_input("班级", placeholder="如：三年级2班")
+    with col2:
+        weight = st.number_input("学生体重(kg)", min_value=10.0, max_value=100.0, step=0.1, placeholder="请输入体重")
+        schoolbag_weight = st.number_input("书包重量(kg)", min_value=0.1, max_value=20.0, step=0.1, placeholder="请输入书包重量")
+    
+    submit_btn = st.form_submit_button("✅ 测算并保存")
+
+# ---------------------- 测算结果展示 ----------------------
+if submit_btn:
+    if not name or not class_name:
+        st.error("❌ 姓名和班级不能为空！")
+    else:
+        max_suitable, is_suitable = calculate_schoolbag(weight, schoolbag_weight)
+        
+        st.subheader("📊 测算结果")
+        result_col1, result_col2, result_col3 = st.columns(3)
+        with result_col1:
+            st.metric("学生体重", f"{weight} kg")
+        with result_col2:
+            st.metric("合理重量上限", f"{max_suitable} kg")
+        with result_col3:
+            st.metric("合规状态", is_suitable)
+        
+        # 【关键修改】数据存入session_state，而非本地Excel
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new_data = pd.DataFrame({
+            "录入时间": [current_time],
+            "姓名": [name],
+            "班级": [class_name],
+            "体重(kg)": [weight],
+            "书包重量(kg)": [schoolbag_weight],
+            "合理重量上限(kg)": [max_suitable],
+            "是否合规": [is_suitable]
+        })
+        st.session_state.data_df = pd.concat([st.session_state.data_df, new_data], ignore_index=True)
+        st.success("✅ 数据已保存！")
+
+# ---------------------- 数据导出区域 ----------------------
+st.subheader("📤 数据导出")
+df = st.session_state.data_df
+if not df.empty:
+    st.dataframe(df, use_container_width=True)
+    
+    # 导出CSV（解决中文乱码）
+    csv_data = df.to_csv(index=False, encoding="utf-8-sig")
+    # 导出Excel
+    excel_buffer = pd.ExcelWriter("temp.xlsx", engine="openpyxl")
+    df.to_excel(excel_buffer, index=False)
+    excel_buffer.close()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            label="📥 导出为CSV文件",
+            data=csv_data,
+            file_name=f"书包重量数据_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+    with col2:
+        with open("temp.xlsx", "rb") as f:
+            st.download_button(
+                label="📥 导出为Excel文件",
+                data=f,
+                file_name=f"书包重量数据_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+    # 删除临时文件
+    if os.path.exists("temp.xlsx"):
+        os.remove("temp.xlsx")
+else:
+    st.info("暂无数据，请先录入学生信息～")
